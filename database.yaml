@@ -1,0 +1,4 @@
+dbhost: "database.server"
+dbuser: "database.user"
+dbpassword: "database.password"
+database: "cencus"
