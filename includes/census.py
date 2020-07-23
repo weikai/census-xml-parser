@@ -46,16 +46,18 @@ class Census:
         #truncate mapimage
         self.dbcursor.execute(f"truncate {self.table_mapimage}")
         
-    def __del__(self): 
-        self.dbconnect.commit()
+    #def __del__(self): 
+        #self.dbconnect.commit()
+        
 
     def parseXML(self,xmlfile):   
         # create element tree object 
         tree = ET.parse(xmlfile) 
     
         # get root element 
-        root = tree.getroot() 
+        root = tree.getroot()         
         path = self.process_node(root)
+        self.dbconnect.commit()
         
 
     def process_node(self,node,data={}):
@@ -94,24 +96,40 @@ class Census:
             data.update({'desc':node.find("T1224-description").text})            
             val = (node.get("ed"), data['stateid'],data['countyid'], node.find("T1224-description").text, self.year)
             self.dbcursor.execute(self.sql_ed_summary, val)   
-            
         
+        # check and process ed-summary first
+        edsummary = node.findall('ed-summary')
+        if edsummary:
+            for el in edsummary:
+                self.process_node(el, data)
         
-        for el in node:        
+        for el in node:                    
             if el.findall("[image]"):                     
                 publication = re.sub("-.*",'',el.tag)                
                 for image in el.iter("image"):  #find and process files                    
                     filename = re.sub("\..*$","", image.get('filename'))
                     namedata = filename.split("-")
-                    rollnum = namedata[2]
-                    imgseq = namedata[3]
-                    filename += ".jpg"
-                    ## need fix empty ed
-                    val = (data.get('stateid'),data.get('countyid'), self.dictget('cityid',data,0), 0,publication,rollnum,imgseq,filename, self.year)                    
-                    
-                    self.dbcursor.execute(self.sql_mapimage, val)   
-                
-            else:
+                    if len(namedata) == 4:
+                        rollnum = namedata[2]
+                        imgseq = namedata[3]
+                        
+                    else:
+                        rollnum = imgseq = 0
+                        print(f"{image.get('filename')} not using standard file format")
+                        
+                    filename += ".jpg"                    
+                    #print(data.get('ed'))
+                    if data.get('ed'):
+                        self.dbcursor.execute(f"SELECT id FROM {self.table_edsummary} WHERE edid = %s", (data.get('ed'),))
+                        result = self.dbcursor.fetchone()
+                        if result:                            
+                            edid = result[0]                        
+                    else:
+                        edid = 0                    
+                    val = (data.get('stateid'),data.get('countyid'), self.dictget('cityid',data,0), edid,publication,rollnum,imgseq,filename, self.year)                                        
+                    #print(val)
+                    self.dbcursor.execute(self.sql_mapimage, val)               
+            elif el.tag != 'ed-summary':  #process other node except ed-summary
                 self.process_node(el, data)
 
     def dictget(self, key, data, empty=''):
@@ -174,6 +192,7 @@ class Census:
             states.append(["Oklahoma","OK"])
             states.append(["Oregon","OR"])
             states.append(["Pennsylvania","PA"])
+            states.append(["Trust Territory of the Pacific Islands","PC"])
             states.append(["Puerto Rico","PR"])
             states.append(["Rhode Island","RI"])
             states.append(["South Carolina","SC"])
