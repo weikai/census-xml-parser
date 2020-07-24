@@ -1,8 +1,13 @@
-import os
+from os import listdir
 from includes.census import *
 
+def list_files(directory, extension):
+    return (f for f in listdir(directory) if f.endswith('.' + extension))
+
+
+
 def main():     
-    census = Census(dbconfig="/home/weikai/database.yaml", year=1940)
+    census = Census(year=1940)
 
     datapath = 'data/XML'
     # parse xml file 
@@ -11,14 +16,16 @@ def main():
     #census.parseXML('data/XML/AL.xml')
     #census.parseXML('data/XML/NE.xml')
     #file = 'data/XML/NE.xml'
-    #file = 'data/XML/AK.xml'
+    file = 'data/XML/AK.xml'
     if file:
         census.parseXML(file)
     else:
-        for file in os.listdir(datapath):        
-            if file.endswith(".xml"):
-                print(f"Processing {os.path.join(datapath, file)}")
-                census.parseXML(os.path.join(datapath, file))
+        files = list_files(datapath, "xml")
+        total=len(files)
+        c=1        
+        for file in files:                                
+            print(f"{c}/{total}: Processing {os.path.join(datapath, file)}")
+            census.parseXML(os.path.join(datapath, file))
     
 if __name__ == "__main__": 
   

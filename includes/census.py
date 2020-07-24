@@ -1,18 +1,22 @@
-import re
-import yaml
+import yaml, re
 import mysql.connector
 import xml.etree.ElementTree as ET 
 
 class Census:
+    
     table_state="state"
     table_county='county'
     table_city='city'
-    table_edsummary="ed_summary "
+    table_edsummary='ed_summary'
     table_mapimage='mapimage'
+    table_recordtype='recordtype'
+
+    settings_recordtypes = None    
 
     states={}
     cities={}
     counties={}
+    recordtypes={}
 
     dbconnect = None
     dbcursor = None
@@ -23,18 +27,25 @@ class Census:
     sql_ed_summary = f"INSERT INTO {table_edsummary} (edid, stateid, countyid, description,year) VALUES (%s, %s, %s, %s, %s)"
     sql_mapimage = f"INSERT INTO {table_mapimage} (stateid, countyid, cityid, edid, publication, rollnum, imgseq, filename, year) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"
 
-    def __init__(self,dbconfig="database.yaml", year=1940):
+    def __init__(self,dbconfig="settings.yaml", year=1940):
+        states=None
         with open(dbconfig) as file:    
-            db = yaml.load(file, Loader=yaml.FullLoader)
+            config = yaml.load(file, Loader=yaml.FullLoader)
+            db = config.get('database')
             self.dbconnect = mysql.connector.connect(
-                host = db.get('dbhost'),
-                user = db.get('dbuser'),
-                password = db.get('dbpassword'),
+                host = db.get('host'),
+                user = db.get('user'),
+                password = db.get('password'),
                 database = db.get('database')
             )
+        states=config.get('states')
+
+        self.settings_recordtypes = config.get('recordtypes')
+        
         self.dbcursor = self.dbconnect.cursor(buffered=True)
         self.year = year
-        self.setup_states()
+        self.setup_recordtype()
+        self.setup_states(states)
         self.setup_county()
 
         # truncate edsummary table
@@ -89,20 +100,41 @@ class Census:
                 self.cities.update({city.lower():self.dbcursor.lastrowid})
                 data.update({'cityid':self.dbcursor.lastrowid})
 
+        # set data type to maps
+        elif node.tag in self.settings_recordtypes.get('maps'):
+            data.update({'type':'maps'})
+            data.update({'typeid':self.recordtypes.get('maps')})
+        
+        # set record type to descriptons
+        elif node.tag in self.settings_recordtypes.get('descriptions'):
+            data.update({'type':'descriptions'})
+            data.update({'typeid':self.recordtypes.get('descriptions')})
 
+            if node.tag == 'T1224-description': # process and save description to db
+                val = (data.get("ed"), data['stateid'],data['countyid'], node.text, self.year)
+                self.dbcursor.execute(self.sql_ed_summary, val)   
+        
+        # set record type to schedules
+        elif node.tag in self.settings_recordtypes.get('schedules'):
+            #print('schedules')
+            data.update({'type':'schedules'})
+            data.update({'typeid':self.recordtypes.get('schedules')})
+        
         #data.update({"tag":node.tag, 'attributes':node.attrib, "node":node.text})    
-        if node.tag == 'ed-summary':  # summary for county-summary     
+        elif node.tag == 'ed-summary':  # summary for county-summary     
             data.update({'ed':node.get("ed")})        
-            data.update({'desc':node.find("T1224-description").text})            
-            val = (node.get("ed"), data['stateid'],data['countyid'], node.find("T1224-description").text, self.year)
-            self.dbcursor.execute(self.sql_ed_summary, val)   
+        
+        
+            
+        
         
         # check and process ed-summary first
         edsummary = node.findall('ed-summary')
         if edsummary:
             for el in edsummary:
                 self.process_node(el, data)
-        
+        #print(node.tag)
+        #print(self.settings_recordtypes.get('descriptions'))
         for el in node:                    
             if el.findall("[image]"):                     
                 publication = re.sub("-.*",'',el.tag)                
@@ -123,11 +155,13 @@ class Census:
                         self.dbcursor.execute(f"SELECT id FROM {self.table_edsummary} WHERE edid = %s", (data.get('ed'),))
                         result = self.dbcursor.fetchone()
                         if result:                            
-                            edid = result[0]                        
+                            edid = result[0]  
+                        else:
+                            edid = 0                      
                     else:
                         edid = 0                    
-                    val = (data.get('stateid'),data.get('countyid'), self.dictget('cityid',data,0), edid,publication,rollnum,imgseq,filename, self.year)                                        
-                    #print(val)
+                    val = (data.get('stateid'),data.get('countyid'), self.dictget('cityid',data,0), edid,publication,rollnum,imgseq,filename, self.year)
+                    
                     self.dbcursor.execute(self.sql_mapimage, val)               
             elif el.tag != 'ed-summary':  #process other node except ed-summary
                 self.process_node(el, data)
@@ -142,77 +176,33 @@ class Census:
         for county in results:                        
             self.counties.update({county[1].lower():county[0]})
         
-    def setup_states(self):
+    def setup_states(self, states):
 
         self.dbcursor.execute(f"SELECT * FROM {self.table_state}")        
         if self.dbcursor.rowcount > 50:
             results = self.dbcursor.fetchall()
             for state in results:
                 self.states.update({state[2].lower():state[0]})                
-        else:
-            states=[]
-            states.append(["Alabama","AL"])
-            states.append(["Alaska","AK"])
-            states.append(["American Samoa","AS"])
-            states.append(["Arizona","AZ"])
-            states.append(["Arkansas","AR"])
-            states.append(["California","CA"])
-            states.append(["Colorado","CO"])
-            states.append(["Connecticut","CT"])
-            states.append(["Delaware","DE"])
-            states.append(["District of Columbia","DC"])
-            states.append(["Florida","FL"])
-            states.append(["Georgia","GA"])
-            states.append(["Guam","GU"])
-            states.append(["Hawaii","HI"])
-            states.append(["Idaho","ID"])
-            states.append(["Illinois","IL"])
-            states.append(["Indiana","IN"])
-            states.append(["Iowa","IA"])
-            states.append(["Kansas","KS"])
-            states.append(["Kentucky","KY"])
-            states.append(["Louisiana","LA"])
-            states.append(["Maine","ME"])
-            states.append(["Maryland","MD"])
-            states.append(["Massachusetts","MA"])
-            states.append(["Michigan","MI"])
-            states.append(["Minnesota","MN"])
-            states.append(["Mississippi","MS"])
-            states.append(["Missouri","MO"])
-            states.append(["Montana","MT"])
-            states.append(["Nebraska","NE"])
-            states.append(["Nevada","NV"])
-            states.append(["New Hampshire","NH"])
-            states.append(["New Jersey","NJ"])
-            states.append(["New Mexico","NM"])
-            states.append(["New York","NY"])
-            states.append(["North Carolina","NC"])
-            states.append(["North Dakota","ND"])
-            states.append(["Ohio","OH"])
-            states.append(["Oklahoma","OK"])
-            states.append(["Oregon","OR"])
-            states.append(["Pennsylvania","PA"])
-            states.append(["Trust Territory of the Pacific Islands","PC"])
-            states.append(["Puerto Rico","PR"])
-            states.append(["Rhode Island","RI"])
-            states.append(["South Carolina","SC"])
-            states.append(["South Dakota","SD"])
-            states.append(["Tennessee","TN"])
-            states.append(["Texas","TX"])
-            states.append(["Utah","UT"])
-            states.append(["Vermont","VT"])
-            states.append(["Virginia","VA"])
-            states.append(["Virgin Islands","VI"])
-            states.append(["Washington","WA"])
-            states.append(["West Virginia","WV"])
-            states.append(["Wisconsin","WI"])
-            states.append(["Wyoming","WY"])
-
+        else:    
             self.dbcursor.execute(f"truncate {self.table_state}")
             sql = f"INSERT INTO {self.table_state} (name, abbr) VALUES (%s, %s)"        
             for state in states:    
-                val = (state[0], state[1])
+                val = (state.split(','))                
                 self.dbcursor.execute(sql, val)
-                self.states.update({state[1].lower():self.dbcursor.lastrowid})
-            
+                self.states.update({val[1].lower():self.dbcursor.lastrowid})
+    
+    def setup_recordtype(self):
+
+        self.dbcursor.execute(f"SELECT * FROM {self.table_recordtype}")        
+        if self.dbcursor.rowcount > 2:
+            results = self.dbcursor.fetchall()
+            for rtype in results:
+                self.recordtypes.update({rtype[1].lower():rtype[0]})                
+        else:            
+            self.dbcursor.execute(f"truncate {self.table_recordtype}")
+            sql = f"INSERT INTO {self.table_recordtype} (name, label) VALUES (%s, %s)"
+            for rtype in self.settings_recordtypes.keys():    
+                val = (rtype.lower(), rtype.capitalize())
+                self.dbcursor.execute(sql, val)
+                self.recordtypes.update({val[0]:self.dbcursor.lastrowid})        
         
