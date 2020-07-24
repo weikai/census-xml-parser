@@ -7,6 +7,7 @@ class Census:
     table_state="state"
     table_county='county'
     table_city='city'
+    table_city_ed='city_ed'
     table_edsummary='ed_summary'
     table_mapimage='mapimage'
     table_recordtype='recordtype'
@@ -24,8 +25,9 @@ class Census:
 
     sql_county = f"INSERT INTO {table_county} (name) VALUES (%s)"
     sql_city = f"INSERT INTO {table_city} (name) VALUES (%s)"
+    sql_city_ed = f"INSERT INTO {table_city_ed} (stateid, countyid, cityid, ed) VALUES (%s, %s, %s, %s)"
     sql_ed_summary = f"INSERT INTO {table_edsummary} (edid, stateid, countyid, description,year) VALUES (%s, %s, %s, %s, %s)"
-    sql_mapimage = f"INSERT INTO {table_mapimage} (stateid, countyid, cityid, edid, publication, rollnum, imgseq, filename, year) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"
+    sql_mapimage = f"INSERT INTO {table_mapimage} (typeid, stateid, countyid, cityid, edid, publication, rollnum, imgseq, filename, year) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
 
     def __init__(self,dbconfig="settings.yaml", year=1940):
         states=None
@@ -56,11 +58,14 @@ class Census:
 
         #truncate mapimage
         self.dbcursor.execute(f"truncate {self.table_mapimage}")
+
+        self.dbcursor.execute(f"truncate {self.table_city_ed}")
         
     #def __del__(self): 
         #self.dbconnect.commit()
         
 
+    # parse xml document
     def parseXML(self,xmlfile):   
         # create element tree object 
         tree = ET.parse(xmlfile) 
@@ -70,11 +75,13 @@ class Census:
         path = self.process_node(root)
         self.dbconnect.commit()
         
-
+    # recursive function to process each node elements    
     def process_node(self,node,data={}):
         # loop through all nodes recursively and process each elements
-
+        parent = data.get('parent')
         data = data.copy()  
+        data.update({'parent': node})
+
         # get state
         if node.tag == 'QC-By-Jurisdiction':
             state = node.get('state')
@@ -93,12 +100,19 @@ class Census:
         elif node.tag == 'city-summary':
             city = node.get('name')
             data.update({'city':city})
-            data.update({'ed-list':node.get('ed-list')})
+            #data.update({'ed-list':node.get('ed-list')})
             if city.lower not in self.cities:
                 val = (city,)                               
-                self.dbcursor.execute(self.sql_city, val)
+                self.dbcursor.execute(self.sql_city, val) #add new city to db
                 self.cities.update({city.lower():self.dbcursor.lastrowid})
                 data.update({'cityid':self.dbcursor.lastrowid})
+
+            for ed in re.split(r'[;,]',node.get('ed-list')):
+                if ed:
+                    val=( data.get('stateid'), data.get('countyid'), data.get('cityid'), ed )
+                    self.dbcursor.execute(self.sql_city_ed, val) #add ed to city ed list
+                    
+
 
         # set data type to maps
         elif node.tag in self.settings_recordtypes.get('maps'):
@@ -124,47 +138,40 @@ class Census:
         elif node.tag == 'ed-summary':  # summary for county-summary     
             data.update({'ed':node.get("ed")})        
         
-        
+        elif node.tag == 'image': # process image node                   
+            publication = re.sub("-.*",'',parent.tag)
+            filename = re.sub("\..*$","", node.get('filename'))
+            namedata = filename.split("-")
+            if len(namedata) == 4:
+                rollnum = namedata[2]
+                imgseq = namedata[3]
+                
+            else:
+                rollnum = imgseq = 0
+                print(f"{node.get('filename')} not using standard file format")
+                
+            filename += ".jpg"                                
+            if data.get('ed'):
+                self.dbcursor.execute(f"SELECT id FROM {self.table_edsummary} WHERE edid = %s", (data.get('ed'),))
+                result = self.dbcursor.fetchone()
+                if result:                            
+                    edid = result[0]                  
+            else:
+                edid = 0                    
+            val = (data.get('typeid'),data.get('stateid'),data.get('countyid'), self.dictget('cityid',data,0), edid,publication,rollnum,imgseq,filename, self.year)
             
+            self.dbcursor.execute(self.sql_mapimage, val)    
         
         
         # check and process ed-summary first
         edsummary = node.findall('ed-summary')
         if edsummary:
             for el in edsummary:
-                self.process_node(el, data)
-        #print(node.tag)
-        #print(self.settings_recordtypes.get('descriptions'))
-        for el in node:                    
-            if el.findall("[image]"):                     
-                publication = re.sub("-.*",'',el.tag)                
-                for image in el.iter("image"):  #find and process files                    
-                    filename = re.sub("\..*$","", image.get('filename'))
-                    namedata = filename.split("-")
-                    if len(namedata) == 4:
-                        rollnum = namedata[2]
-                        imgseq = namedata[3]
-                        
-                    else:
-                        rollnum = imgseq = 0
-                        print(f"{image.get('filename')} not using standard file format")
-                        
-                    filename += ".jpg"                    
-                    #print(data.get('ed'))
-                    if data.get('ed'):
-                        self.dbcursor.execute(f"SELECT id FROM {self.table_edsummary} WHERE edid = %s", (data.get('ed'),))
-                        result = self.dbcursor.fetchone()
-                        if result:                            
-                            edid = result[0]  
-                        else:
-                            edid = 0                      
-                    else:
-                        edid = 0                    
-                    val = (data.get('stateid'),data.get('countyid'), self.dictget('cityid',data,0), edid,publication,rollnum,imgseq,filename, self.year)
-                    
-                    self.dbcursor.execute(self.sql_mapimage, val)               
-            elif el.tag != 'ed-summary':  #process other node except ed-summary
-                self.process_node(el, data)
+                self.process_node(el, data)        
+
+        for el in node:
+            if el.tag != 'ed-summary':  #process other node except ed-summary
+                self.process_node(el, data)  # call self recursively to process children nodes
 
     def dictget(self, key, data, empty=''):
         if data and key in data:

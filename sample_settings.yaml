@@ -1,8 +1,17 @@
-database:
+atabase:
   host: "database.server"
   user: "database.user"
   password: "database.password"
-  database: "cencus"
+  database: "census"
+
+recordtypes:
+  maps:
+    - A3378-map
+  descriptions:
+    - T1224-description
+    - T1224-images
+  schedules:
+    - T627-files
 
 states:
   - Alabama,AL
