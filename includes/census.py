@@ -11,6 +11,7 @@ class Census:
     table_edsummary='ed_summary'
     table_mapimage='mapimage'
     table_recordtype='recordtype'
+    table_locale='locale'
 
     settings_recordtypes = None    
 
@@ -26,7 +27,8 @@ class Census:
     sql_county = f"INSERT INTO {table_county} (name) VALUES (%s)"
     sql_city = f"INSERT INTO {table_city} (name) VALUES (%s)"
     sql_city_ed = f"INSERT INTO {table_city_ed} (stateid, countyid, cityid, ed) VALUES (%s, %s, %s, %s)"
-    sql_ed_summary = f"INSERT INTO {table_edsummary} (edid, stateid, countyid, description,year) VALUES (%s, %s, %s, %s, %s)"
+    sql_ed_summary = f"INSERT INTO {table_edsummary} (edid, stateid, countyid, description,year, sortkey) VALUES (%s, %s, %s, %s, %s, %s)"
+    sql_locale = f"INSERT INTO {table_locale} (stateid, countyid, cityid) VALUES (%s, %s, %s)"
     sql_mapimage = f"INSERT INTO {table_mapimage} (typeid, stateid, countyid, cityid, edid, publication, rollnum, imgseq, filename, year) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
 
     def __init__(self,dbconfig="settings.yaml", year=1940):
@@ -60,6 +62,9 @@ class Census:
         self.dbcursor.execute(f"truncate {self.table_mapimage}")
 
         self.dbcursor.execute(f"truncate {self.table_city_ed}")
+
+        self.dbcursor.execute(f"truncate {self.table_city}")
+        self.dbcursor.execute(f"truncate {self.table_locale}")
         
     #def __del__(self): 
         #self.dbconnect.commit()
@@ -107,7 +112,13 @@ class Census:
                 self.cities.update({city.lower():self.dbcursor.lastrowid})
                 data.update({'cityid':self.dbcursor.lastrowid})
 
+            # add state, count and city relations
+            val=( data.get('stateid'), data.get('countyid'), data.get('cityid'))
+            self.dbcursor.execute(self.sql_locale, val)
+
+            #add ed-list to city
             for ed in re.split(r'[;,]',node.get('ed-list')):
+                
                 if ed:
                     val=( data.get('stateid'), data.get('countyid'), data.get('cityid'), ed )
                     self.dbcursor.execute(self.sql_city_ed, val) #add ed to city ed list
@@ -125,7 +136,11 @@ class Census:
             data.update({'typeid':self.recordtypes.get('descriptions')})
 
             if node.tag == 'T1224-description': # process and save description to db
-                val = (data.get("ed"), data['stateid'],data['countyid'], node.text, self.year)
+                sortid=''
+                for g  in data.get("ed").split('-'):
+                    sortid += str(g).zfill(3)
+                
+                val = (data.get("ed"), data['stateid'],data['countyid'], node.text, self.year,sortid)
                 self.dbcursor.execute(self.sql_ed_summary, val)   
         
         # set record type to schedules
