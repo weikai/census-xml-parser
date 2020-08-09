@@ -7,11 +7,11 @@ class Census:
     table_state="state"
     table_county='county'
     table_city='city'
-    table_city_ed='city_ed'
+    table_city_ed='enumeration'
     table_edsummary='ed_summary'
-    table_mapimage='mapimage'
-    table_recordtype='recordtype'
-    table_locale='locale'
+    table_mapimage='map_image'
+    table_recordtype='record_type'
+    table_locale='city_state'
 
     settings_recordtypes = None    
 
@@ -26,8 +26,8 @@ class Census:
 
     sql_county = f"INSERT INTO {table_county} (name) VALUES (%s)"
     sql_city = f"INSERT INTO {table_city} (name) VALUES (%s)"
-    sql_city_ed = f"INSERT INTO {table_city_ed} (stateid, countyid, cityid, ed) VALUES (%s, %s, %s, %s)"
-    sql_ed_summary = f"INSERT INTO {table_edsummary} (edid, stateid, countyid, description,year, sortkey) VALUES (%s, %s, %s, %s, %s, %s)"
+    sql_city_ed = f"INSERT INTO {table_city_ed} (stateid, countyid, cityid, edid) VALUES (%s, %s, %s, %s)"
+    sql_ed_summary = f"INSERT INTO {table_edsummary} (ed, stateid, countyid, description,year, sortkey) VALUES (%s, %s, %s, %s, %s, %s)"
     sql_locale = f"INSERT INTO {table_locale} (stateid, countyid, cityid) VALUES (%s, %s, %s)"
     sql_mapimage = f"INSERT INTO {table_mapimage} (typeid, stateid, countyid, cityid, edid, publication, rollnum, imgseq, filename, year) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
 
@@ -120,8 +120,11 @@ class Census:
             for ed in re.split(r'[;,]',node.get('ed-list')):
                 
                 if ed:
-                    val=( data.get('stateid'), data.get('countyid'), data.get('cityid'), ed )
-                    self.dbcursor.execute(self.sql_city_ed, val) #add ed to city ed list
+                    eid = self.find_ed_id(ed, data.get('stateid'), data.get('countyid'))
+                    if eid:
+                        self.insert_enumeration(data.get('stateid'), data.get('countyid'), data.get('cityid'), eid)
+                    else:
+                        print("Can't find ed record in ed_summary")
                     
 
 
@@ -166,14 +169,21 @@ class Census:
                 print(f"{node.get('filename')} not using standard file format")
                 
             filename += ".jpg"                                
-            if data.get('ed'):
-                self.dbcursor.execute(f"SELECT id FROM {self.table_edsummary} WHERE edid = %s", (data.get('ed'),))
-                result = self.dbcursor.fetchone()
-                if result:                            
-                    edid = result[0]                  
-            else:
-                edid = 0                    
-            val = (data.get('typeid'),data.get('stateid'),data.get('countyid'), self.dictget('cityid',data,0), edid,publication,rollnum,imgseq,filename, self.year)
+            if data.get('ed'):                
+                eid = self.find_ed_id( data.get('ed'), data.get('stateid'), data.get('countyid') )                
+
+                #print( data.get('ed'), data.get('stateid'), data.get('countyid') ,  self.dictget('cityid',data,0), eid)
+                if eid:                    
+                    edid = self.insert_enumeration(data.get('stateid'), data.get('countyid'), data.get('cityid'),eid)
+                else:
+                    print(f"ed {data.get('ed')} not found")
+            else:                
+                edid=None
+                        
+            #print(f"ed: {data.get('ed')}; city: {data.get('cityid')}")
+            val = (data.get('typeid'),data.get('stateid'),data.get('countyid'), self.dictget('cityid',data,None), edid,publication,rollnum,imgseq,filename, self.year)
+
+            #print(val)
             
             self.dbcursor.execute(self.sql_mapimage, val)    
         
@@ -209,7 +219,8 @@ class Census:
             self.dbcursor.execute(f"truncate {self.table_state}")
             sql = f"INSERT INTO {self.table_state} (name, abbr) VALUES (%s, %s)"        
             for state in states:    
-                val = (state.split(','))                
+                val = (state.split(','))
+                #print(val);
                 self.dbcursor.execute(sql, val)
                 self.states.update({val[1].lower():self.dbcursor.lastrowid})
     
@@ -227,4 +238,33 @@ class Census:
                 val = (rtype.lower(), rtype.capitalize())
                 self.dbcursor.execute(sql, val)
                 self.recordtypes.update({val[0]:self.dbcursor.lastrowid})        
+
+    def insert_enumeration(self, stateid, countyid, cityid, edid): 
         
+        if cityid: # skip insert if edid with same city county and state is already exists
+            self.dbcursor.execute(f"SELECT id, cityid FROM {self.table_city_ed} WHERE edid = %s and stateid = %s and countyid = %s and cityid = %s", ( edid, stateid, countyid, cityid))        
+            result = self.dbcursor.fetchone()        
+            if result:
+                return result[0]
+
+        self.dbcursor.execute(f"SELECT id, cityid FROM {self.table_city_ed} WHERE edid = %s and stateid = %s and countyid = %s", ( edid, stateid, countyid))
+        result = self.dbcursor.fetchone()        
+        if result:   
+            id = result[0]    
+            
+            if cityid and not result[1]:  # update the city record if city is empty
+                self.dbcursor.execute(f"UPDATE {self.table_city_ed} SET cityid = %s WHERE id = %s", ( result[0], cityid))               
+            return id
+            
+        #add new record
+        val=(stateid, countyid, cityid, edid )         
+        self.dbcursor.execute(self.sql_city_ed, val) 
+        return self.dbcursor.lastrowid
+    
+    def find_ed_id(self, ed, stateid, countyid):
+        self.dbcursor.execute(f"SELECT id FROM {self.table_edsummary} WHERE ed = %s and  stateid = %s and countyid = %s", (ed,stateid, countyid))
+        result = self.dbcursor.fetchone()
+        if result:                                                
+            return result[0]
+        else:
+            return None
