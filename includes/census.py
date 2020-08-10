@@ -7,7 +7,7 @@ class Census:
     table_state="state"
     table_county='county'
     table_city='city'
-    table_city_ed='enumeration'
+    table_enumeration='enumeration'
     table_edsummary='ed_summary'
     table_mapimage='map_image'
     table_recordtype='record_type'
@@ -26,10 +26,10 @@ class Census:
 
     sql_county = f"INSERT INTO {table_county} (name) VALUES (%s)"
     sql_city = f"INSERT INTO {table_city} (name) VALUES (%s)"
-    sql_city_ed = f"INSERT INTO {table_city_ed} (stateid, countyid, cityid, edid) VALUES (%s, %s, %s, %s)"
-    sql_ed_summary = f"INSERT INTO {table_edsummary} (ed, stateid, countyid, description,year, sortkey) VALUES (%s, %s, %s, %s, %s, %s)"
-    sql_locale = f"INSERT INTO {table_locale} (stateid, countyid, cityid) VALUES (%s, %s, %s)"
-    sql_mapimage = f"INSERT INTO {table_mapimage} (typeid, stateid, countyid, cityid, edid, publication, rollnum, imgseq, filename, year) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+    sql_city_ed = f"INSERT INTO {table_enumeration} (state_id, county_id, city_id, ed_id) VALUES (%s, %s, %s, %s)"
+    sql_ed_summary = f"INSERT INTO {table_edsummary} (ed, state_id, county_id, description,year, sortkey) VALUES (%s, %s, %s, %s, %s, %s)"
+    sql_locale = f"INSERT INTO {table_locale} (state_id, county_id, city_id) VALUES (%s, %s, %s)"
+    sql_mapimage = f"INSERT INTO {table_mapimage} (type_id, state_id, county_id, city_id, enum_id, publication, rollnum, imgseq, filename, year) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
 
     def __init__(self,dbconfig="settings.yaml", year=1940):
         states=None
@@ -48,23 +48,29 @@ class Census:
         
         self.dbcursor = self.dbconnect.cursor(buffered=True)
         self.year = year
+
+        self.dbcursor.execute("SET FOREIGN_KEY_CHECKS=0")
+        #truncate mapimage
+        self.dbcursor.execute(f"truncate {self.table_mapimage}")
+
+        # truncate edsummary table
+        self.dbcursor.execute(f"truncate {self.table_edsummary}")
+        
+        self.dbcursor.execute(f"truncate {self.table_locale}")
+        self.dbcursor.execute(f"truncate {self.table_enumeration}")
+        self.dbcursor.execute(f"truncate {self.table_recordtype}")
+        self.dbcursor.execute(f"truncate {self.table_city}")
+        self.dbcursor.execute(f"truncate {self.table_state}")
+        # truncate county table
+        self.dbcursor.execute(f"truncate {self.table_county}")
+        self.dbcursor.execute("SET FOREIGN_KEY_CHECKS=1")
+
         self.setup_recordtype()
         self.setup_states(states)
         self.setup_county()
 
-        # truncate edsummary table
-        self.dbcursor.execute(f"truncate {self.table_edsummary}")
 
-        # truncate county table
-        self.dbcursor.execute(f"truncate {self.table_county}")
-
-        #truncate mapimage
-        self.dbcursor.execute(f"truncate {self.table_mapimage}")
-
-        self.dbcursor.execute(f"truncate {self.table_city_ed}")
-
-        self.dbcursor.execute(f"truncate {self.table_city}")
-        self.dbcursor.execute(f"truncate {self.table_locale}")
+        
         
     #def __del__(self): 
         #self.dbconnect.commit()
@@ -109,7 +115,7 @@ class Census:
             if city.lower not in self.cities:
                 val = (city,)                               
                 self.dbcursor.execute(self.sql_city, val) #add new city to db
-                self.cities.update({city.lower():self.dbcursor.lastrowid})
+                self.cities.update({city.lower():self.dbcursor.lastrowid})                                
                 data.update({'cityid':self.dbcursor.lastrowid})
 
             # add state, count and city relations
@@ -215,8 +221,7 @@ class Census:
             results = self.dbcursor.fetchall()
             for state in results:
                 self.states.update({state[2].lower():state[0]})                
-        else:    
-            self.dbcursor.execute(f"truncate {self.table_state}")
+        else:                
             sql = f"INSERT INTO {self.table_state} (name, abbr) VALUES (%s, %s)"        
             for state in states:    
                 val = (state.split(','))
@@ -231,29 +236,28 @@ class Census:
             results = self.dbcursor.fetchall()
             for rtype in results:
                 self.recordtypes.update({rtype[1].lower():rtype[0]})                
-        else:            
-            self.dbcursor.execute(f"truncate {self.table_recordtype}")
+        else:                        
             sql = f"INSERT INTO {self.table_recordtype} (name, label) VALUES (%s, %s)"
             for rtype in self.settings_recordtypes.keys():    
                 val = (rtype.lower(), rtype.capitalize())
                 self.dbcursor.execute(sql, val)
                 self.recordtypes.update({val[0]:self.dbcursor.lastrowid})        
 
-    def insert_enumeration(self, stateid, countyid, cityid, edid): 
+    def insert_enumeration(self, stateid, countyid, cityid, edid):         
         
-        if cityid: # skip insert if edid with same city county and state is already exists
-            self.dbcursor.execute(f"SELECT id, cityid FROM {self.table_city_ed} WHERE edid = %s and stateid = %s and countyid = %s and cityid = %s", ( edid, stateid, countyid, cityid))        
+        if cityid: # skip insert if edid with same city county and state is already exists            
+            self.dbcursor.execute(f"SELECT id, city_id FROM {self.table_enumeration} WHERE ed_id = %s and state_id = %s and county_id = %s and city_id = %s", ( edid, stateid, countyid, cityid))        
             result = self.dbcursor.fetchone()        
             if result:
                 return result[0]
 
-        self.dbcursor.execute(f"SELECT id, cityid FROM {self.table_city_ed} WHERE edid = %s and stateid = %s and countyid = %s", ( edid, stateid, countyid))
+        self.dbcursor.execute(f"SELECT id, city_id FROM {self.table_enumeration} WHERE ed_id = %s and state_id = %s and county_id = %s", ( edid, stateid, countyid))
         result = self.dbcursor.fetchone()        
         if result:   
             id = result[0]    
             
-            if cityid and not result[1]:  # update the city record if city is empty
-                self.dbcursor.execute(f"UPDATE {self.table_city_ed} SET cityid = %s WHERE id = %s", ( result[0], cityid))               
+            if cityid and not result[1]:  # update the city record if city is empty                
+                self.dbcursor.execute(f"UPDATE {self.table_enumeration} SET city_id = %s WHERE id = %s", ( cityid, result[0]) )
             return id
             
         #add new record
@@ -262,7 +266,7 @@ class Census:
         return self.dbcursor.lastrowid
     
     def find_ed_id(self, ed, stateid, countyid):
-        self.dbcursor.execute(f"SELECT id FROM {self.table_edsummary} WHERE ed = %s and  stateid = %s and countyid = %s", (ed,stateid, countyid))
+        self.dbcursor.execute(f"SELECT id FROM {self.table_edsummary} WHERE ed = %s and  state_id = %s and county_id = %s", (ed,stateid, countyid))
         result = self.dbcursor.fetchone()
         if result:                                                
             return result[0]
